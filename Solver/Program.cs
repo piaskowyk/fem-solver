@@ -1,10 +1,13 @@
 ﻿using System;
+using System.IO;
+using Extreme.Mathematics;
+using Extreme.Mathematics.Calculus;
 using Gtk;
+using Newtonsoft.Json;
 using OxyPlot;
+using OxyPlot.Axes;
 using OxyPlot.GtkSharp;
 using OxyPlot.Series;
-using Extreme.Mathematics;
-using OxyPlot.Axes;
 
 namespace Solver
 {
@@ -25,16 +28,12 @@ namespace Solver
         PlotModel plotModel;
 
         Extreme.Mathematics.Calculus.RombergIntegrator integrator = new Extreme.Mathematics.Calculus.RombergIntegrator();
-        //SimpsonIntegrator integrator = new SimpsonIntegrator();
 
         double begin_domain = 0;
         double end_domain = 1;
-        double k = 1;
         double u0 = 5;
-        int n = 5;
-        double relativeToleranceForIntegrator = 1e-6;
-        int minIterationForIntegrator = 11;
         double[] linearSpace;
+        Config config;
 
         public MainWindow() : base(Gtk.WindowType.Toplevel)
         {
@@ -44,78 +43,80 @@ namespace Solver
 
         private void initialization()
         {
+            string jsonConf = File.ReadAllText("config.json");
+            config = JsonConvert.DeserializeObject<Config>(jsonConf);
+
             plotView = new PlotView();
             this.Add(plotView);
             plotView.ShowAll();
             plotModel = new PlotModel();
 
-            LinearAxis linearAxisX = new LinearAxis();
-            linearAxisX.MajorGridlineStyle = LineStyle.Solid;
-            linearAxisX.MinorGridlineStyle = LineStyle.Dot;
-            linearAxisX.Position = AxisPosition.Bottom;
+            LinearAxis linearAxisX = new LinearAxis
+            {
+                MajorGridlineStyle = LineStyle.Solid,
+                MinorGridlineStyle = LineStyle.Dot,
+                Position = AxisPosition.Bottom
+            };
             plotModel.Axes.Add(linearAxisX);
 
-            LinearAxis linearAxisY = new LinearAxis();
-            linearAxisY.MajorGridlineStyle = LineStyle.Solid;
-            linearAxisY.MinorGridlineStyle = LineStyle.Dot;
+            LinearAxis linearAxisY = new LinearAxis
+            {
+                MajorGridlineStyle = LineStyle.Solid,
+                MinorGridlineStyle = LineStyle.Dot
+            };
             plotModel.Axes.Add(linearAxisY);
 
-            integrator.RelativeTolerance = relativeToleranceForIntegrator;
+            integrator.RelativeTolerance = config.relativeToleranceForIntegrator;
             integrator.ConvergenceCriterion = ConvergenceCriterion.WithinRelativeTolerance;
-            integrator.MinIterations = minIterationForIntegrator;
+            integrator.MinIterations = config.minIterationForIntegrator;
 
-            linearSpace = new double[n + 1];
+            linearSpace = new double[config.n + 1];
             linearSpace[0] = begin_domain;
-            linearSpace[n] = end_domain;
-            for(int index = 1; index < n; index++)
+            linearSpace[config.n] = end_domain;
+            for(int index = 1; index < config.n; index++)
             {
-                linearSpace[index] = (end_domain - begin_domain) / n * index;
+                linearSpace[index] = (end_domain - begin_domain) / config.n * index;
             }
         }
 
         private void Solve()
         {
-            Func<double, double>[] testingFunctions = new Func<double, double>[n + 1];
-            var B_matrix = MathNet.Numerics.LinearAlgebra.Matrix<double>.Build.Dense(n, n);
-            var B_matrix2 = MathNet.Numerics.LinearAlgebra.Matrix<double>.Build.Dense(n, n);
-            var L_matrix = MathNet.Numerics.LinearAlgebra.Vector<double>.Build.Dense(n);
+            Func<double, double>[] basicFunctions = new Func<double, double>[config.n + 1];
+            var B_matrix = MathNet.Numerics.LinearAlgebra.Matrix<double>.Build.Dense(config.n, config.n);
+            var L_matrix = MathNet.Numerics.LinearAlgebra.Vector<double>.Build.Dense(config.n);
 
-            for (int seria = 0; seria <= n; seria++)
+            for (int seria = 0; seria <= config.n; seria++)
             {
                 int uniqSeriaCopy = seria;
-                testingFunctions[seria] = xVar => Math.Max(0, 1 - (Math.Abs(xVar - (end_domain - begin_domain) * uniqSeriaCopy / n) * n));
+                basicFunctions[seria] = xVar => 
+                    Math.Max(0, 1 - (Math.Abs(xVar - (end_domain - begin_domain) * uniqSeriaCopy / config.n) * config.n));
 
-                plotModel.Series.Add(new FunctionSeries(testingFunctions[seria], 0, 1, 500));
-            }
-
-            for (int firstIndex = 0; firstIndex < n; firstIndex++)
-            {
-                for (int secondIndex = 0; secondIndex < n; secondIndex++)
+                if (config.showBasicFunctions)
                 {
-                    B_matrix[firstIndex, secondIndex] = B_function(testingFunctions[secondIndex + 1], testingFunctions[firstIndex + 1]);
+                    plotModel.Series.Add(new FunctionSeries(basicFunctions[seria], begin_domain, end_domain, config.n * 100));
                 }
             }
 
-            for (int index = 0; index < n; index++)
+            for (int firstIndex = 0; firstIndex < config.n; firstIndex++)
             {
-                L_matrix[index] = L_function(testingFunctions[index + 1]) - u0 * B_function(testingFunctions[0], testingFunctions[index + 1]);
+                for (int secondIndex = 0; secondIndex < config.n; secondIndex++)
+                {
+                    B_matrix[firstIndex, secondIndex] = B_function(basicFunctions[secondIndex + 1], basicFunctions[firstIndex + 1]);
+                }
+            }
+
+            for (int index = 0; index < config.n; index++)
+            {
+                L_matrix[index] = L_function(basicFunctions[index + 1]) - u0 * B_function(basicFunctions[0], basicFunctions[index + 1]);
             }
 
             var U_matrix = B_matrix.Solve(L_matrix);
-            var new_U_matrix = MathNet.Numerics.LinearAlgebra.Vector<double>.Build.Dense(n + 1);
-            new_U_matrix[0] = u0;
-            for (int i = 1; i < n + 1; i++)
+            var increased_U_matrix = MathNet.Numerics.LinearAlgebra.Vector<double>.Build.Dense(config.n + 1);
+            increased_U_matrix[0] = u0;
+            for (int i = 1; i < config.n + 1; i++)
             {
-                new_U_matrix[i] = U_matrix[i - 1];
+                increased_U_matrix[i] = U_matrix[i - 1];
             }
-            /*
-            var U_matrix2 = B_matrix2.Solve(L_matrix);
-            var new_U_matrix2 = MathNet.Numerics.LinearAlgebra.Vector<double>.Build.Dense(n + 1);
-            new_U_matrix2[0] = u0;
-            for (int i = 1; i < n + 1; i++)
-            {
-                new_U_matrix2[i] = U_matrix2[i - 1];
-            }*/
 
             Console.WriteLine("B matrix");
             Console.WriteLine(B_matrix);
@@ -124,31 +125,19 @@ namespace Solver
             Console.WriteLine("U matrix");
             Console.WriteLine(U_matrix);
 
-            /*Console.WriteLine("B matrix");
-            Console.WriteLine(B_matrix2);
-            Console.WriteLine("L matrix");
-            Console.WriteLine(L_matrix);
-            Console.WriteLine("U matrix");
-            Console.WriteLine(U_matrix);*/
-
             LineSeries approximFunction = new LineSeries();
-            //LineSeries approximFunction2 = new LineSeries();
 
             foreach (double point in linearSpace)
             {
                 double valInX = 0;
-                //double valInX2 = 0;
-                for (int index = 0; index < n + 1; index++)
+                for (int index = 0; index < config.n + 1; index++)
                 {
-                    valInX += new_U_matrix[index] * testingFunctions[index](point);
-                    //valInX2 += new_U_matrix2[index] * testingFunctions[index](point);
+                    valInX += increased_U_matrix[index] * basicFunctions[index](point);
                 }
                 approximFunction.Points.Add(new DataPoint(point, valInX));
-                //approximFunction2.Points.Add(new DataPoint(point, valInX2));
             }
 
             plotModel.Series.Add(approximFunction);
-            //plotModel.Series.Add(approximFunction2);
             plotView.Model = plotModel;
         }
 
@@ -157,11 +146,10 @@ namespace Solver
             Func<double, double> dU = u.GetNumericalDifferentiator();
             Func<double, double> dV = v.GetNumericalDifferentiator();
 
-            Func<double, double> partial1 = x => dU(x) * dV(x);
-            Func<double, double> partial2 = x => dU(x) * v(x);
+            double partial1(double x) => dU(x) * dV(x);
+            double partial2(double x) => dU(x) * v(x);
 
-            //k * dU(0) * v(0)
-            var result = k * integrator.Integrate(partial1, begin_domain, end_domain)
+            var result = config.k * integrator.Integrate(partial1, begin_domain, end_domain)
                 + integrator.Integrate(partial2, begin_domain, end_domain);
                 
             return result;
@@ -169,9 +157,9 @@ namespace Solver
 
         private double L_function(Func<double, double> v)
         {
-            Func<double, double> function = x => (5 * x - 10) * v(x); 
+            double function(double x) => (5 * x - 10) * v(x);
 
-            var result = integrator.Integrate(function, begin_domain, end_domain) + 3 * k * v(1);
+            var result = integrator.Integrate(function, begin_domain, end_domain) + 3 * config.k * v(1);
             return result;
         }
 
@@ -179,6 +167,15 @@ namespace Solver
         {
             Application.Quit();
             a.RetVal = true;
+        }
+
+        public class Config
+        {
+            public int k;
+            public int n;
+            public double relativeToleranceForIntegrator;
+            public int minIterationForIntegrator;
+            public bool showBasicFunctions;
         }
 
     }
